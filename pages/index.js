@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 
-const SIGNAL_SERVER = 'ws://192.168.29.51:8000/ws';
+const SIGNAL_SERVER = 'wss://server.onrender.com/ws';
 
 export default function Home() {
   const [username, setUsername] = useState('');
