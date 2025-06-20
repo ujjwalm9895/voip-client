@@ -1,7 +1,7 @@
 // pages/index.js
 import { useRef, useState, useEffect } from 'react';
 import useAISocket from '../hooks/useAISocket';
-import Dreamboard from '../components/Dreamboard';
+import Dreamboard from '../src/components/Dreamboard';
 
 const SIGNAL_SERVER = 'wss://server-olzm.onrender.com/ws';
 
