@@ -1,13 +1,9 @@
-import { useRef, useState } from 'react';
-
+// pages/index.js
+import { useRef, useState, useEffect } from 'react';
+import useAISocket from '../hooks/useAISocket';
 import Dreamboard from '../components/Dreamboard';
 
 const SIGNAL_SERVER = 'wss://server-olzm.onrender.com/ws';
-/
-import useAISocket from '../hooks/useAISocket';
-
-
-const AI_SOCKET = 'wss://server-olzm.onrender.com/ws-ai';
 
 export default function Home() {
   const [username, setUsername] = useState('');
@@ -28,7 +24,7 @@ export default function Home() {
   const callStartTimeRef = useRef(null);
   const pendingCandidates = useRef([]);
 
-  const { connectAISocket, sendAudio, closeAISocket } = useAISocket(setImages);
+  const { connectAISocket, closeAISocket } = useAISocket(setImages);
 
   const register = () => {
     if (!username) return;
@@ -36,6 +32,7 @@ export default function Home() {
     wsRef.current = socket;
 
     socket.onopen = () => {
+      console.log('✅ WebSocket connected');
       setConnected(true);
     };
 
@@ -61,36 +58,39 @@ export default function Home() {
         if (!pcRef.current?.remoteDescription) {
           pendingCandidates.current.push(data.candidate);
         } else {
-          await pcRef.current.addIceCandidate(candidate);
+          try {
+            await pcRef.current.addIceCandidate(candidate);
+          } catch (err) {
+            console.error('❌ ICE add error:', err);
+          }
         }
       }
 
       if (data.type === 'end-call') {
         cleanupCall();
-        alert('Call ended');
+        alert('📴 Call ended by the other user');
       }
     };
   };
 
   const setupWebRTC = async () => {
     if (pcRef.current) return;
-    const pc = new RTCPeerConnection({
-      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
-    });
+    const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
     pcRef.current = pc;
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     localStreamRef.current = stream;
     localAudioRef.current.srcObject = stream;
-    stream.getTracks().forEach(track => pc.addTrack(track, stream));
+    stream.getTracks().forEach((track) => pc.addTrack(track, stream));
+
     pc.onicecandidate = (event) => {
       if (event.candidate) {
         wsRef.current?.send(JSON.stringify({ type: 'ice-candidate', candidate: event.candidate }));
       }
     };
+
     pc.ontrack = (event) => {
       remoteAudioRef.current.srcObject = event.streams[0];
     };
-    connectAISocket(stream);
   };
 
   const startCall = async () => {
@@ -100,6 +100,7 @@ export default function Home() {
     wsRef.current.send(JSON.stringify({ type: 'offer', offer, to: peerName, from: username }));
     setInCall(true);
     startTimer();
+    connectAISocket(localStreamRef.current);
   };
 
   const acceptCall = async () => {
@@ -109,23 +110,42 @@ export default function Home() {
     setIncomingCall(null);
     setInCall(true);
     startTimer();
+    connectAISocket(localStreamRef.current);
+  };
+
+  const rejectCall = () => {
+    cleanupCall();
+    setIncomingCall(null);
+    alert('❌ Call Rejected');
+  };
+
+  const endCall = () => {
+    try {
+      wsRef.current?.send(JSON.stringify({ type: 'end-call' }));
+    } catch (err) {
+      console.warn('Could not notify peer:', err);
+    }
+    cleanupCall();
+    alert('📴 You ended the call');
   };
 
   const cleanupCall = () => {
     pcRef.current?.close();
     pcRef.current = null;
-    setInCall(false);
     stopTimer();
     closeAISocket();
+    setInCall(false);
     if (localStreamRef.current) {
-      localStreamRef.current.getTracks().forEach(t => t.stop());
+      localStreamRef.current.getTracks().forEach((t) => t.stop());
       localStreamRef.current = null;
     }
   };
 
-  const endCall = () => {
-    wsRef.current?.send(JSON.stringify({ type: 'end-call' }));
-    cleanupCall();
+  const toggleMute = () => {
+    if (!localStreamRef.current) return;
+    const audioTrack = localStreamRef.current.getAudioTracks()[0];
+    audioTrack.enabled = !audioTrack.enabled;
+    setMuted(!audioTrack.enabled);
   };
 
   const startTimer = () => {
@@ -145,48 +165,45 @@ export default function Home() {
 
   return (
     <div style={{ padding: 20 }}>
-      <h2>VoIP + AI Dreamboard</h2>
-
+      <h2>🔊 VoIP Calling App</h2>
       {!connected && (
         <div>
-          <input placeholder="Username" value={username} onChange={(e) => setUsername(e.target.value)} />
+          <input placeholder="Your username" value={username} onChange={(e) => setUsername(e.target.value)} />
           <button onClick={register}>Register</button>
         </div>
       )}
-
-      {connected && !inCall && (
-        <div>
-          <input placeholder="Call peer" value={peerName} onChange={(e) => setPeerName(e.target.value)} />
-          <button onClick={startCall}>Call</button>
+      {connected && (
+        <>
+          <p>✅ Registered as <strong>{username}</strong></p>
+          {!inCall && (
+            <>
+              <input placeholder="Call peer" value={peerName} onChange={(e) => setPeerName(e.target.value)} />
+              <button onClick={startCall}>Call</button>
+            </>
+          )}
+        </>
+      )}
+      {incomingCall && !inCall && (
+        <div style={{ marginTop: 20, border: '1px solid #ccc', padding: 10 }}>
+          <p>📞 Incoming call from <strong>{incomingCall}</strong></p>
+          <button onClick={acceptCall}>✅ Accept</button>
+          <button onClick={rejectCall}>❌ Reject</button>
         </div>
       )}
-
-      {incomingCall && (
-        <div>
-          <p>Incoming call from {incomingCall}</p>
-          <button onClick={acceptCall}>Accept</button>
-          <button onClick={cleanupCall}>Reject</button>
-        </div>
-      )}
-
       {inCall && (
-        <div>
-          <p>Call Time: {timer}</p>
+        <div style={{ marginTop: 20 }}>
+          <h4>🕒 Call Time: {timer}</h4>
+          <button onClick={toggleMute}>{muted ? 'Unmute' : 'Mute'}</button>
           <button onClick={endCall}>End Call</button>
         </div>
       )}
-
-      <div>
-        <h3>Dreamboard (Live)</h3>
-        <div style={{ display: 'flex', flexWrap: 'wrap' }}>
-          {images.map((url, idx) => (
-            <img key={idx} src={url} alt="ai" style={{ width: 128, margin: 4 }} />
-          ))}
-        </div>
+      <div style={{ marginTop: 30 }}>
+        <p>🎤 Local Audio</p>
+        <audio ref={localAudioRef} autoPlay muted />
+        <p>📞 Remote Audio</p>
+        <audio ref={remoteAudioRef} autoPlay />
       </div>
-
-      <audio ref={localAudioRef} autoPlay muted />
-      <audio ref={remoteAudioRef} autoPlay />
+      <Dreamboard images={images} />
     </div>
   );
 }
